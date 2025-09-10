@@ -2,15 +2,15 @@ name: CI/CD
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
   pull_request:
-    branches: ["main"]
+    branches: [ "main" ]
   workflow_dispatch:
 
+# Needed so we can push the container image to GHCR
 permissions:
   contents: read
   packages: write
-  id-token: write
 
 jobs:
   ci:
@@ -19,49 +19,65 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 18
-          cache: npm
+          cache: 'npm'
+
       - name: Install deps
         run: npm ci
+
       - name: Lint
         run: npm run lint
+
       - name: Unit tests
         run: npm test
 
   build-and-publish:
-    name: Build & Publish Container (GHCR)
+    name: Build & Publish Container (GHCR) + Deploy
     needs: ci
+    # Only build/publish/deploy from the main branch
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Login to GHCR
         run: echo "${{ github.token }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
       - name: Build image
         run: |
           IMAGE=ghcr.io/${{ github.repository_owner }}/ci-cd-starter
           docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
+
       - name: Push image
         run: |
           IMAGE=ghcr.io/${{ github.repository_owner }}/ci-cd-starter
           docker push $IMAGE:${{ github.sha }}
           docker push $IMAGE:latest
+
       - name: Trigger Render Deploy (Production)
-          env:
-    RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
-  run: |
-    if [ -z "$RENDER_DEPLOY_HOOK" ]; then
-      echo "No RENDER_DEPLOY_HOOK secret set; skipping deploy."
-      exit 0
-    fi
-    echo "Triggering Render deploy..."
-    curl -fsSL -X POST "$RENDER_DEPLOY_HOOK"
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
+            echo "No RENDER_DEPLOY_HOOK secret set; skipping deploy."
+            exit 0
+          fi
+          echo "Triggering Render deploy..."
+          curl -fsSL -X POST "$RENDER_DEPLOY_HOOK"
+
   smoke-test:
     name: Post-Deploy Smoke Test
     needs: build-and-publish
+    # Only smoke-test the prod URL for main
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Wait for service health
@@ -69,11 +85,20 @@ jobs:
           SMOKE_URL: ${{ secrets.SMOKE_URL }}
         run: |
           if [ -z "$SMOKE_URL" ]; then
-            echo "No SMOKE_URL set"; exit 1
+            echo "No SMOKE_URL secret set; failing so you notice."
+            exit 1
           fi
+
+          echo "Polling $SMOKE_URL/health ..."
           for i in {1..40}; do
             code=$(curl -sS -m 5 -o /dev/null -w "%{http_code}" "$SMOKE_URL/health" || true)
-            if [ "$code" = "200" ]; then echo "OK"; exit 0; fi
-            echo "Attempt $i: $code"; sleep 5
+            if [ "$code" = "200" ]; then
+              echo "✅ Healthy"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $code"
+            sleep 5
           done
-          echo "Service not healthy in time"; exit 1
+
+          echo "❌ Service did not become healthy in time."
+          exit 1
