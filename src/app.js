@@ -1,4 +1,4 @@
-const express = require('express');
+tconst express = require('express');
 const app = express();
 
 app.get('/health', (req, res) => {
@@ -6,7 +6,7 @@ app.get('/health', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  res.send('Hello, CI/CD! My first deployment is complete!');
+  res.send('Hello, CI/CD! My first next is complete!');
 });
 
 module.exports = app;
