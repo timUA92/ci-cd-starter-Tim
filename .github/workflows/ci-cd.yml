@@ -50,12 +50,15 @@ jobs:
           docker push $IMAGE:${{ github.sha }}
           docker push $IMAGE:latest
       - name: Trigger Render Deploy (Production)
-        if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
-        env:
-          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
-        run: |
-          curl -fsSL -X POST "$RENDER_DEPLOY_HOOK"
-
+          env:
+    RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+  run: |
+    if [ -z "$RENDER_DEPLOY_HOOK" ]; then
+      echo "No RENDER_DEPLOY_HOOK secret set; skipping deploy."
+      exit 0
+    fi
+    echo "Triggering Render deploy..."
+    curl -fsSL -X POST "$RENDER_DEPLOY_HOOK"
   smoke-test:
     name: Post-Deploy Smoke Test
     needs: build-and-publish
