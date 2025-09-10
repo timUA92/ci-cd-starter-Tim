@@ -1,0 +1,76 @@
+name: CI/CD
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  ci:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+      - name: Install deps
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm test
+
+  build-and-publish:
+    name: Build & Publish Container (GHCR)
+    needs: ci
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Login to GHCR
+        run: echo "${{ github.token }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Build image
+        run: |
+          IMAGE=ghcr.io/${{ github.repository_owner }}/ci-cd-starter
+          docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
+      - name: Push image
+        run: |
+          IMAGE=ghcr.io/${{ github.repository_owner }}/ci-cd-starter
+          docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:latest
+      - name: Trigger Render Deploy (Production)
+        if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          curl -fsSL -X POST "$RENDER_DEPLOY_HOOK"
+
+  smoke-test:
+    name: Post-Deploy Smoke Test
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for service health
+        env:
+          SMOKE_URL: ${{ secrets.SMOKE_URL }}
+        run: |
+          if [ -z "$SMOKE_URL" ]; then
+            echo "No SMOKE_URL set"; exit 1
+          fi
+          for i in {1..40}; do
+            code=$(curl -sS -m 5 -o /dev/null -w "%{http_code}" "$SMOKE_URL/health" || true)
+            if [ "$code" = "200" ]; then echo "OK"; exit 0; fi
+            echo "Attempt $i: $code"; sleep 5
+          done
+          echo "Service not healthy in time"; exit 1
