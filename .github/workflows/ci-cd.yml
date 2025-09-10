@@ -36,31 +36,13 @@ jobs:
         run: npm test
 
   build-and-publish:
-    name: Build & Publish Container (GHCR) + Deploy
+    name: Trigger Deploy to Render
     needs: ci
-    # Only build/publish/deploy from the main branch
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Login to GHCR
-        run: echo "${{ github.token }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Build image
-        run: |
-          IMAGE=ghcr.io/${{ github.repository_owner }}/ci-cd-starter
-          docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
-
-      - name: Push image
-        run: |
-          IMAGE=ghcr.io/${{ github.repository_owner }}/ci-cd-starter
-          docker push $IMAGE:${{ github.sha }}
-          docker push $IMAGE:latest
 
       - name: Trigger Render Deploy (Production)
         env:
@@ -72,6 +54,7 @@ jobs:
           fi
           echo "Triggering Render deploy..."
           curl -fsSL -X POST "$RENDER_DEPLOY_HOOK"
+
 
   smoke-test:
     name: Post-Deploy Smoke Test
